@@ -1,0 +1,5 @@
+bulk: 2, 3
+bulk: 4, 5, 67
+bulk: 5, 6
+bulk: 7
+main: 10 strings, 4 blocks, 8 commands
