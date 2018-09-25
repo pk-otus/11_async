@@ -73,9 +73,3 @@ TEST(BulkTest, BulkMTTest5)
 	ASSERT_TRUE(std::get<0>(tested));
 	ASSERT_EQ(std::get<1>(tested), control);
 }
-
-int main(int argc, char** argv)
-{
-	::testing::InitGoogleTest(&argc, argv);
-	return RUN_ALL_TESTS();
-}

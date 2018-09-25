@@ -1,6 +1,5 @@
 #pragma once
 #include <sstream>
-#include <exception>
 namespace async
 {
 	struct stat_counter

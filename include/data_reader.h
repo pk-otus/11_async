@@ -1,6 +1,9 @@
 #pragma once
+#include <algorithm>
+
 #include "special.h"
 #include "task_queue.h"
+
 namespace async
 {
 	class data_reader : special_command_handler
@@ -16,13 +19,11 @@ namespace async
 
 		data_reader_results Perform(std::istream& input_stream)
 		{
-			auto strCmd = std::string();
-			while (!input_stream.eof())
+			for (std::string strCmd; std::getline(input_stream, strCmd);)
 			{
-				strCmd = "";
-				input_stream >> strCmd;
+				strCmd.erase(std::remove(strCmd.begin(), strCmd.end(), '\r'), strCmd.end());
 				if (strCmd.empty()) continue;
-
+				
 				if (TryHandleSpecial(strCmd))
 				{
 					stats.AddString();

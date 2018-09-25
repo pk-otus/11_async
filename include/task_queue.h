@@ -2,23 +2,14 @@
 #include <iostream>
 #include <queue>
 #include <thread>
-#include <map>
 #include <condition_variable>
 #include <algorithm>
 
 #include "statistics.h"
+#include <atomic>
 
-template<typename T> T Pop(std::queue<T>& q)
-{
-	auto ptr = std::move(q.front());
-	q.pop();
-	return std::move(ptr);
-}
 namespace async
 {
-	using cout_element_t = std::pair<size_t, std::string>;
-	using file_element_t = std::unique_ptr<commands_block>;
-
 	template <typename T>
 	class task_queue
 	{
@@ -28,9 +19,10 @@ namespace async
 		{
 			for (size_t i = 0; i < num_threads; ++i)
 			{
-				threads.emplace_back(&task_queue::DoWork, this);
-				st.insert({ threads.back().get_id(),
-							stat_counter(1 == num_threads ? 0 : threads.size()) });
+				threads.emplace_back(
+							&task_queue::DoWork, 
+							this, 
+							1 == num_threads ? 0 : threads.size());
 			}
 		}
 
@@ -42,17 +34,14 @@ namespace async
 		std::vector<stat_counter> GetStatistics()
 		{
 			JoinAll();
-
-			std::vector<stat_counter> result;
-			transform(st.begin(), st.end(), std::back_inserter(result),
-				[](const auto& d) { return d.second; });
-
-			return result;
+			return stats;
 		}
 		void Push(std::unique_ptr<commands_block>& elem)
 		{
-			std::lock_guard<std::mutex> lock(guard_mutex);
-			Enqueue(elem);
+			{
+				std::lock_guard<std::mutex> lock(guard_mutex);
+				Enqueue(elem);
+			}
 			cond_var.notify_one();
 		}
 
@@ -71,37 +60,53 @@ namespace async
 			}
 		}
 
-		void DoWork() // active object pattern
+		void DoWork(size_t num) // active object pattern
 		{
+			stat_counter stat(num);
+
 			while (isWorking)
-			{
+			{			
 				std::unique_lock<std::mutex> lock(guard_mutex);
-				while (queue_elements.empty() && isWorking)
-				{  // loop to avoid spurious wakeups
-					cond_var.wait(lock);
-				}
+				cond_var.wait(lock, 
+							[this]() { return !queue_elements.empty() || !isWorking; });
 
 				if (isWorking)
-					PopQueue();
+				{
+					auto e = std::move(queue_elements.front());
+					queue_elements.pop();
+					lock.unlock();
+					stat.AddBlock(CommandsCount(e));
+					Log(e, stat);
+				}
 			}
 			{
 				std::unique_lock<std::mutex> lock(guard_mutex);
 				while (!queue_elements.empty())
-					PopQueue();
+				{
+					auto e = std::move(queue_elements.front());
+					queue_elements.pop();
+					stat.AddBlock(CommandsCount(e));
+					Log(e, stat);
+				}
+				stats.push_back(stat);
 			}
-
 		}
 
 		void Enqueue(std::unique_ptr<commands_block>& elem);
-		void PopQueue();
 
-		bool									isWorking;
-		std::mutex								guard_mutex;
-		std::condition_variable					cond_var;
-		std::vector<std::thread>				threads;
-		std::map<std::thread::id, stat_counter> st;
-		std::queue<element_t>					queue_elements;
+		static size_t CommandsCount(const element_t& e);
+		static void Log(const element_t& e, const stat_counter& st);
+
+		std::atomic<bool>			isWorking;
+		std::mutex					guard_mutex;
+		std::condition_variable		cond_var;
+		std::vector<std::thread>	threads;
+		std::vector<stat_counter>	stats;
+		std::queue<element_t>		queue_elements;
 	};
+
+	using cout_element_t = std::pair<size_t, std::string>;
+	using file_element_t = std::unique_ptr<commands_block>;
 
 	template <>
 	inline void task_queue<file_element_t>::Enqueue(std::unique_ptr<commands_block>& elem)
@@ -115,19 +120,25 @@ namespace async
 	}
 
 	template <>
-	inline void task_queue<file_element_t>::PopQueue()
-	{
-		auto e = Pop(queue_elements);
-		auto& stat = st.at(std::this_thread::get_id());
-		stat.AddBlock(e->CommandsCount());
-		e->LogToFile(stat.thread_number, stat.block_counter);
+	inline size_t task_queue<file_element_t>::CommandsCount(const element_t& e)
+	{		
+		return e->CommandsCount();
 	}
 
 	template <>
-	inline void task_queue<cout_element_t>::PopQueue()
+	inline size_t task_queue<cout_element_t>::CommandsCount(const element_t& e)
 	{
-		auto e = Pop(queue_elements);
-		st.at(std::this_thread::get_id()).AddBlock(e.first);
+		return e.first;
+	}
+
+	template <>
+	inline void task_queue<file_element_t>::Log(const element_t& e, const stat_counter& st)
+	{
+		e->LogToFile(st.thread_number, st.block_counter);
+	}
+	template <>
+	inline void task_queue<cout_element_t>::Log(const element_t& e, const stat_counter& st) 
+	{
 		std::cout << e.second << std::endl;
 	}
 }
