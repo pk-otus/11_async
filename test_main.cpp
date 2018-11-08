@@ -1,4 +1,7 @@
+#include <algorithm>
 #include <fstream>
+#include <string>
+
 #include <gtest/gtest.h>
 
 #include "..//include/async.h"
