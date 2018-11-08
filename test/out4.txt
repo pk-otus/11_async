@@ -1,2 +1,0 @@
-bulk: cmd1, cmd2, cmd3
-main: 8 strings, 1 blocks, 3 commands

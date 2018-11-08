@@ -1,74 +1,86 @@
 #pragma once
-#include <algorithm>
+#include <queue>
+#include <condition_variable>
+#include <atomic>
+#include <thread>
 
-#include "special.h"
-#include "task_queue.h"
+#include "command_handler.h"
 
 namespace async
 {
-	class data_reader : special_command_handler
+	class data_reader 
 	{
 	public:
-		data_reader(size_t num_commands, size_t cnt_file_threads) :
-			special_command_handler(num_commands),
-			file_threads(cnt_file_threads),
-			cout_threads(1),
-			commands(nullptr) {}
-
-		~data_reader() = default;
-
-		data_reader_results Perform(std::istream& input_stream)
+		data_reader(size_t instance_id, size_t num_commands) :
+			handler		(instance_id, num_commands),			
+			isWorking	(true)
 		{
-			for (std::string strCmd; std::getline(input_stream, strCmd);)
+			thread_consumer = std::thread(&data_reader::consumer_worker, this);
+		}
+
+		~data_reader()
+		{
+			isWorking = false;
+			cond_var.notify_all();						
+			thread_consumer.join();
+		}
+		
+		void receive(const std::string& str)
+		{	
+			bool needs_notify = false;
+
 			{
-				strCmd.erase(std::remove(strCmd.begin(), strCmd.end(), '\r'), strCmd.end());
-				if (strCmd.empty()) continue;
+				std::lock_guard<std::mutex> lock(guard_mutex);
+				buffer += str;
+
+				auto pos_end = buffer.find('\n');
+				while (std::string::npos != pos_end)
+				{
+					auto cmd = buffer.substr(0, pos_end);
+					buffer = buffer.substr(pos_end + 1);
+					pos_end = buffer.find('\n');
+
+					if (!cmd.empty())
+					{
+						q.push(cmd);
+						needs_notify = true;
+					}
+				}
+			}
+			if (needs_notify)
+				cond_var.notify_one();
+		}
+			
+	private:		
+		void consumer_worker()
+		{
+			while (isWorking)
+			{
+				std::unique_lock<std::mutex> lock(guard_mutex);
+				cond_var.wait(lock,
+					[this]() { return !q.empty() || !isWorking; });
+
+				auto cmd = q.front();
+				q.pop();
+				lock.unlock();
+				handler.handle_command(cmd);
+
+			}
+			while (!q.empty()) 
+			{
+				handler.handle_command(q.front());
+				q.pop();
+			}
+		}
 				
-				if (TryHandleSpecial(strCmd))
-				{
-					stats.AddString();
-					continue;
-				}
-				if (!commands)
-				{
-					commands = CreateCommandBlock();
-				}
+		std::string					buffer;
+		std::queue<std::string>		q;
+		command_handler				handler;
 
-				commands->AddCommand(strCmd);
-				if (commands->IsFull())
-					Flush();
-			}
-			if (dynamic_cast<limited_commands_block*>(commands.get()))
-			{
-				Flush();
-			}
-			else
-			{
-				if (commands)
-					stats.AddString(commands->CommandsCount());
-			}
-
-			return { stats,
-						cout_threads.GetStatistics().front(),
-						file_threads.GetStatistics() };
-		}
-	private:
-		void Flush() override
-		{
-			if (commands)
-			{
-				stats.basic_stat.AddBlock(commands->CommandsCount());
-				cout_threads.Push(commands);
-				file_threads.Push(commands);
-
-				commands = nullptr;
-			}
-		}
-
-		task_queue<file_element_t> file_threads;
-		task_queue<cout_element_t> cout_threads;
-
-		stat_special_counter stats;
-		std::unique_ptr<commands_block>	commands;
+		std::atomic<bool>			isWorking;
+		std::mutex					guard_mutex;
+		std::condition_variable		cond_var;
+				
+		std::thread					thread_consumer;		
 	};
 }
