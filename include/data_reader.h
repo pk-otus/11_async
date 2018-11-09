@@ -60,6 +60,9 @@ namespace async
 				cond_var.wait(lock,
 					[this]() { return !q.empty() || !isWorking; });
 
+				if (!isWorking)
+					break;
+
 				auto cmd = q.front();
 				q.pop();
 				lock.unlock();

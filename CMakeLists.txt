@@ -56,6 +56,7 @@ add_test(test3		async_test)
 add_test(test4		async_test)
 add_test(test5		async_test)
 add_test(separated	async_test)
+add_test(mike		async_test)
 
 install(TARGETS libasync RUNTIME 
 							DESTINATION bin 
